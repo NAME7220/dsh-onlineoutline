@@ -2,6 +2,18 @@
 
 A scrollable **question outline** on the right edge of a DeepSeek Harness conversation. It replaces the built-in turn tick rail with a list of your questions, so you can see where you are and jump around.
 
+> **Unofficial.** This is a community plugin. It is not a DeepSeek release and is
+> not affiliated with or endorsed by DeepSeek.
+>
+> **Runs with the harness's own permissions.** A DSH plugin is not sandboxed: it
+> executes inside the harness process with the same file and process access as the
+> app itself. Read the source before installing this or any fork of it.
+>
+> **Pinned to one DSH version.** Written and verified against DeepSeek Harness
+> `0.2.2-rc.5` only. It reads built-in markers and a hashed class name, so a DSH
+> upgrade will probably break it — see
+> [Requirements and known limits](#requirements-and-known-limits).
+
 Developed and verified against **DeepSeek Harness `0.2.2-rc.5`** (Windows desktop).
 
 ## What it does
@@ -40,3 +52,7 @@ Then reload the client (refresh the window; restart the desktop app if the clien
 ## Layout constants
 
 All tunables live at the top of `client.js`: panel width and cap height, the collapsed strip width, the right offset, the minimum gap to the message column, and the two viewport thresholds for the sidebar behaviour.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
