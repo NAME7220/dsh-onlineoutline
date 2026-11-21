@@ -30,13 +30,14 @@ window.__ModuleLoader__.load({
     const PANEL_WIDTH = 240
     const PANEL_MAX_HEIGHT = 240
     /**
-     * Width of the collapsed tick strip. Must fit the 6px scrollbar box plus the
-     * row's 12px right padding plus the widest dash (the accent one), so a dash
-     * sits at exactly the same x whether the panel is collapsed or expanded.
+     * Width of the collapsed tick strip: the 6px scrollbar box plus the 30px tick
+     * slot, with a couple of pixels of slack so the pill is never clipped.
      */
     const COLLAPSED_WIDTH = 42
     /** Gap between the panel and the window's right edge. */
     const PANEL_OFFSET_RIGHT = 18
+    /** Hover preview card width, matching the built-in turn preview. */
+    const PREVIEW_WIDTH = 300
     /** Clearance the collapsed strip must keep from the conversation column. */
     const MIN_CONTENT_GAP = 18
     /** Hard floor for the conversation area, regardless of column measurements. */
@@ -125,7 +126,7 @@ ${RAIL_FRAME} { display: none !important; }
   gap: 8px;
   width: 100%;
   height: ${ROW_HEIGHT}px;
-  padding: 0 12px 0 14px;
+  padding: 0 0 0 14px;
   box-sizing: border-box;
   background: none;
   border: 0;
@@ -178,21 +179,22 @@ ${RAIL_FRAME} { display: none !important; }
      composite pass, which flattens the rounded caps of such a small box. */
   background: rgba(255, 255, 255, 0.35);
   background: color-mix(in srgb, currentColor 35%, transparent);
-  /* Breathing room between the label and the tick. */
-  margin-left: 10px;
+  /* Fixed 30px tick slot at the row's right end. An auto left margin pins the
+     tick there and the right margin centres it inside the slot, so the tick's
+     centre sits at the same distance from the panel's right edge in both states:
+     collapsing and expanding never move it. */
+  margin-left: auto;
+  margin-right: 8px;
   /* Own stacking layer: the panel's backdrop blur otherwise composites the dash
      and drops its rounded ends. */
   position: relative;
   z-index: 1;
 }
-/* Collapsed: drop the text, but keep the dash right-aligned with the same
-   padding as an expanded row so it never shifts when the panel opens. */
+/* Collapsed: drop the text. The tick keeps its slot and margins, so its centre
+   stays put when the panel opens. */
 .to-outline:not(:hover):not(:focus-within) .to-outline__row {
-  justify-content: flex-end;
   gap: 0;
-  /* Left padding too: the widest tick needs slack on BOTH sides, otherwise the
-     list's overflow clip shaves the tick's left cap. */
-  padding: 0 12px 0 6px;
+  padding: 0;
 }
 .to-outline:not(:hover):not(:focus-within) .to-outline__index,
 .to-outline:not(:hover):not(:focus-within) .to-outline__title {
@@ -201,16 +203,15 @@ ${RAIL_FRAME} { display: none !important; }
 .to-outline:not(:hover):not(:focus-within) .to-outline__dash {
   background: rgba(255, 255, 255, 0.45);
   background: color-mix(in srgb, currentColor 45%, transparent);
-  /* No label in the collapsed strip, so no gap: this keeps the tick's right edge
-     at exactly the same x as when the panel is expanded. */
-  margin-left: 0;
 }
-/* The turn being read carries the accent on its tick: same size in both states,
-   so hovering changes the colour and the label, never the geometry. */
+/* The turn being read carries the accent on its tick. Size only: the slot margin
+   below keeps its centre fixed, so two states never disagree about geometry. */
 .to-outline__row[data-active='true'] .to-outline__dash {
   width: 16px;
   height: 4px;
   border-radius: 999px;
+  /* (30 - 16) / 2 gives the wider accent tick the same centre inside the slot. */
+  margin-right: 7px;
   background: var(--dsw-alias-state-business-primary, #4c8dff);
 }
 /* The collapsed dim rule outranks the accent rule, so restore full strength
@@ -226,7 +227,7 @@ ${RAIL_FRAME} { display: none !important; }
   position: fixed;
   z-index: 2147483000;
   box-sizing: border-box;
-  width: 300px;
+  width: ${PREVIEW_WIDTH}px;
   max-height: 100px;
   padding: 10px 12px;
   border-radius: var(--dsw-radius-lg, 12px);
@@ -280,17 +281,44 @@ ${RAIL_FRAME} { display: none !important; }
       return '#' + String(entry.turn ?? '')
     }
 
-    /** Scroll the conversation to one turn, with a ratio fallback. */
+    /**
+     * Scroll the conversation to one turn.
+     *
+     * Only turns near the viewport are mounted (the chat virtualises its rows),
+     * so a far target has no marker to scroll to. In that case jump to the
+     * proportional position and keep re-checking while older pages load in; a
+     * single attempt silently does nothing whenever the target is off-screen.
+     */
     function jumpToTurn(turn, total) {
-      const marker = document.querySelector('[data-turn-tail="' + turn + '"]')
+      const findMarker = () => document.querySelector('[data-turn-tail="' + turn + '"]')
+
+      const marker = findMarker()
       if (marker !== null) {
-        marker.scrollIntoView({ block: 'start', behavior: 'smooth' })
+        marker.scrollIntoView({ block: 'start', behavior: 'auto' })
         return
       }
+
       const scroller = document.querySelector(SCROLLER)
-      if (scroller === null || total <= 1) return
-      const ratio = (turn - 1) / (total - 1)
-      scroller.scrollTo({ top: ratio * scroller.scrollHeight, behavior: 'smooth' })
+      if (scroller === null) return
+
+      // The scroller may be the scroll container itself or a wrapper around it.
+      const height = scroller.scrollHeight
+      const viewport = scroller.clientHeight
+      const ratio = total <= 1 ? 0 : (turn - 1) / (total - 1)
+      const target = Math.max(0, Math.round(ratio * (height - viewport)))
+      scroller.scrollTop = target
+
+      let attempts = 0
+      const retry = () => {
+        const found = findMarker()
+        if (found !== null) {
+          found.scrollIntoView({ block: 'start', behavior: 'auto' })
+          return
+        }
+        if (++attempts > 12) return
+        window.setTimeout(retry, 150)
+      }
+      window.setTimeout(retry, 150)
     }
 
     /** The outline panel; mounted once, in the composer dock slot. */
@@ -315,9 +343,13 @@ ${RAIL_FRAME} { display: none !important; }
         const rect = event.currentTarget.getBoundingClientRect()
         const prompt = typeof entry.prompt === 'string' ? entry.prompt.replace(/\s+/g, ' ').trim() : ''
         const response = typeof entry.response === 'string' ? entry.response.replace(/\s+/g, ' ').trim() : ''
+        // The card sits 10px left of the row, but never far enough left to cross
+        // the window edge on a narrow conversation column.
+        const desired = Math.round(window.innerWidth - rect.left + 10)
+        const limit = Math.max(PANEL_OFFSET_RIGHT, Math.round(window.innerWidth - PREVIEW_WIDTH - 8))
         setHovered({
           top: Math.round(rect.top + rect.height / 2),
-          right: Math.round(window.innerWidth - rect.left + 10),
+          right: Math.min(desired, limit),
           prompt: prompt.length > 0 ? prompt : '#' + String(entry.turn ?? ''),
           response,
         })
@@ -456,6 +488,11 @@ ${RAIL_FRAME} { display: none !important; }
         if (row !== null) row.scrollIntoView({ block: 'nearest' })
       }, [active])
 
+      // A hidden panel must not leave a stale preview card floating.
+      React.useEffect(() => {
+        if (crowded) setHovered(null)
+      }, [crowded])
+
       if (total === 0 || crowded) return null
 
       const panel = h(
@@ -521,15 +558,15 @@ ${RAIL_FRAME} { display: none !important; }
       apply(ctx) {
         ctx.effect(() => {
           const style = document.createElement('style')
-          style.setAttribute('data-turn-outline', '')
+          style.setAttribute('data-dsh-onlineoutline', '')
           style.textContent = CSS
           document.head.appendChild(style)
           return () => { style.remove() }
-        }, 'turn-outline: styles')
+        }, 'dsh-onlineoutline: styles')
 
         ctx.slots.inject('conversation.composer.dock', () =>
           ctx.slots.register(
-            { name: 'conversation.composer.dock', id: 'turn-outline', order: 40 },
+            { name: 'conversation.composer.dock', id: 'dsh-onlineoutline', order: 40 },
             OutlinePanel,
           ),
         )
