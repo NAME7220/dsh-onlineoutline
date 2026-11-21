@@ -64,6 +64,13 @@ Then reload the client (refresh the window; restart the desktop app if the clien
 
 All tunables live at the top of `client.js`: panel width and cap height, the collapsed strip width, the right offset, the minimum gap to the message column, and the two viewport thresholds for the sidebar behaviour.
 
+## Releasing
+
+1. Bump `version` in `package.json`.
+2. Commit, then tag: `git tag -a v0.1.1 -m "dsh-onlineoutline 0.1.1"`.
+3. Push both: `git push && git push origin v0.1.1`.
+4. On GitHub, draft a release for that tag (Releases → Draft a new release), so the changelog sits next to the code.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

@@ -58,6 +58,13 @@ dsh plugin --profile desktop add <本目录绝对路径>
 
 可调参数都在 `client.js` 顶部：面板宽度与最大高度、收起带宽度、右侧偏移、与消息列的最小间距，以及左侧栏行为的两个视口阈值。
 
+## 发版流程
+
+1. 修改 `package.json` 里的 `version`；
+2. 提交后打标签：`git tag -a v0.1.1 -m "dsh-onlineoutline 0.1.1"`；
+3. 一起推送：`git push && git push origin v0.1.1`；
+4. 在 GitHub 上为该标签草拟一个 Release（Releases → Draft a new release），这样变更说明会和代码放在一起。
+
 ## 许可证
 
 MIT —— 见 [LICENSE](LICENSE)。
