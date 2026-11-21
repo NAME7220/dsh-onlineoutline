@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Question outline",
+    "description": "Shows a scrollable list of the questions in this conversation on the right edge, and jumps to one when clicked. Replaces the built-in turn tick rail."
+  }
+}
