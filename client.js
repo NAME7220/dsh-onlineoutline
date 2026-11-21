@@ -22,6 +22,10 @@ window.__ModuleLoader__.load({
 
     /** Built-in tick rail container. Hashed build artifact; verify after upgrades. */
     const RAIL_FRAME = '.SNx2jG_frame'
+    /** Scroll box of the built-in rail; its marks carry data-index. */
+    const RAIL_SCROLLER = '.SNx2jG_scroller'
+    /** Vertical step between built-in rail marks, in px. */
+    const RAIL_SPACING = 10
     /** Marker the chat renderer puts on each turn's tail node. */
     const TURN_MARKER = '[data-turn-tail]'
     const SCROLLER = '[data-conversation-scroll]'
@@ -34,7 +38,7 @@ window.__ModuleLoader__.load({
      * slot, with a couple of pixels of slack so the pill is never clipped.
      */
     const COLLAPSED_WIDTH = 42
-    /** Gap between the panel and the window's right edge. */
+    /** Gap between the panel and the conversation area's right edge. */
     const PANEL_OFFSET_RIGHT = 18
     /** Hover preview card width, matching the built-in turn preview. */
     const PREVIEW_WIDTH = 300
@@ -57,7 +61,10 @@ window.__ModuleLoader__.load({
     const BOTTOM_EPSILON = 8
 
     const CSS = `
-${RAIL_FRAME} { display: none !important; }
+/* The built-in rail stays laid out but invisible: its marks are virtualised, and
+   a display:none box reports zero height, which stops them from rendering — and
+   those marks are what drive the host's own turn navigation. */
+${RAIL_FRAME} { opacity: 0 !important; pointer-events: none !important; }
 /* Collapsed by default: the same list, rendered as a compact tick rail. Rows
    keep their spacing and count, so the strip is a miniature of the outline.
    Expands on hover or keyboard focus. */
@@ -282,43 +289,137 @@ ${RAIL_FRAME} { display: none !important; }
     }
 
     /**
-     * Scroll the conversation to one turn.
-     *
-     * Only turns near the viewport are mounted (the chat virtualises its rows),
-     * so a far target has no marker to scroll to. In that case jump to the
-     * proportional position and keep re-checking while older pages load in; a
-     * single attempt silently does nothing whenever the target is off-screen.
+     * The element that actually scrolls the conversation. The marked node is
+     * usually it, but with a side panel open the marked wrapper can be a plain
+     * box, in which case the nearest scrollable ancestor is the real scroller.
      */
-    function jumpToTurn(turn, total) {
+    function findScroller() {
+      const marked = document.querySelector(SCROLLER)
+      const scrollable = (node) => node !== null
+        && node.scrollHeight > node.clientHeight + 4
+        && /(auto|scroll)/.test(window.getComputedStyle(node).overflowY)
+
+      if (scrollable(marked)) return marked
+
+      let node = document.querySelector(TURN_MARKER)
+      node = node === null ? null : node.parentElement
+      while (node !== null) {
+        if (scrollable(node)) return node
+        node = node.parentElement
+      }
+      return marked
+    }
+
+    /** Axis-aligned turns currently mounted, ascending. */
+    function mountedTurns() {
+      const turns = []
+      for (const node of document.querySelectorAll(TURN_MARKER)) {
+        const turn = Number(node.getAttribute('data-turn-tail'))
+        if (!Number.isNaN(turn)) turns.push(turn)
+      }
+      return turns.sort((left, right) => left - right)
+    }
+
+    /**
+     * Fallback navigation that crawls the conversation a viewport at a time.
+     *
+     * Only turns near the viewport are mounted (the chat virtualises its rows and
+     * loads older pages on demand), so a far target usually has no marker at all.
+     * Crawling also triggers the lazy page loads, and parks the turn about a third
+     * of the way down rather than at the very top.
+     */
+    function crawlToTurn(turn, total) {
+      const scroller = findScroller()
+      if (scroller === null) return
+
       const findMarker = () => document.querySelector('[data-turn-tail="' + turn + '"]')
 
-      const marker = findMarker()
-      if (marker !== null) {
-        marker.scrollIntoView({ block: 'start', behavior: 'auto' })
+      const park = (marker) => {
+        const markerRect = marker.getBoundingClientRect()
+        const scrollerRect = scroller.getBoundingClientRect()
+        // Offset of the marker inside the visible area, then move it to ~35%.
+        const delta = (markerRect.top - scrollerRect.top) - scrollerRect.height * 0.35
+        scroller.scrollTop += delta
+      }
+
+      const immediate = findMarker()
+      if (immediate !== null) {
+        park(immediate)
         return
       }
 
-      const scroller = document.querySelector(SCROLLER)
-      if (scroller === null) return
-
-      // The scroller may be the scroll container itself or a wrapper around it.
-      const height = scroller.scrollHeight
-      const viewport = scroller.clientHeight
+      // Rough first hop over the loaded content, to cut the crawl distance.
       const ratio = total <= 1 ? 0 : (turn - 1) / (total - 1)
-      const target = Math.max(0, Math.round(ratio * (height - viewport)))
-      scroller.scrollTop = target
+      scroller.scrollTop = Math.round(ratio * (scroller.scrollHeight - scroller.clientHeight))
 
+      const turns = mountedTurns()
+      const crawlsUp = turns.length > 0 && turn < turns[0]
+      const step = Math.max(120, Math.round(scroller.clientHeight * 0.9))
       let attempts = 0
-      const retry = () => {
-        const found = findMarker()
-        if (found !== null) {
-          found.scrollIntoView({ block: 'start', behavior: 'auto' })
+
+      const crawl = () => {
+        const marker = findMarker()
+        if (marker !== null) {
+          park(marker)
           return
         }
-        if (++attempts > 12) return
-        window.setTimeout(retry, 150)
+        if (++attempts > 50) return
+        scroller.scrollTop += crawlsUp ? -step : step
+        window.setTimeout(crawl, 60)
       }
-      window.setTimeout(retry, 150)
+      window.setTimeout(crawl, 60)
+    }
+
+    /**
+     * Scroll one turn into view.
+     *
+     * Preferred path: click the built-in rail's mark for that turn and let the
+     * host run its own navigation, which knows how to load unloaded history and
+     * where exactly to land. `index` is the outline index, which is also the
+     * mark's data-index. When no mark is reachable (rail absent, or the build
+     * renamed things) it falls back to crawling.
+     */
+    function jumpToTurn(turn, index, total) {
+      const rail = document.querySelector(RAIL_SCROLLER)
+      if (rail !== null) {
+        let tries = 0
+        const attempt = () => {
+          const mark = rail.querySelector('[data-index="' + index + '"]')
+          if (mark !== null) {
+            mark.click()
+            return
+          }
+          if (++tries > 8) {
+            crawlToTurn(turn, total)
+            return
+          }
+          // Scroll the rail so the virtualised mark for that index renders.
+          rail.scrollTop = Math.max(0, index * RAIL_SPACING - rail.clientHeight / 2)
+          window.setTimeout(attempt, 40)
+        }
+        attempt()
+        return
+      }
+      crawlToTurn(turn, total)
+    }
+
+    /**
+     * Anchor the panel inside the conversation area rather than the window: with
+     * a right sidebar open the two are nothing alike, and a window-anchored panel
+     * would sit on top of the sidebar. Written straight to the DOM so scrolling
+     * does not have to go through React.
+     */
+    function placePanel(element, scroller) {
+      if (element === null) return
+      const rect = scroller === null ? null : scroller.getBoundingClientRect()
+      const right = rect === null
+        ? PANEL_OFFSET_RIGHT
+        : Math.round(window.innerWidth - rect.right + PANEL_OFFSET_RIGHT)
+      const top = rect === null
+        ? Math.round(window.innerHeight / 2)
+        : Math.round(rect.top + rect.height / 2)
+      element.style.right = right + 'px'
+      element.style.top = top + 'px'
     }
 
     /** The outline panel; mounted once, in the composer dock slot. */
@@ -332,6 +433,17 @@ ${RAIL_FRAME} { display: none !important; }
       const [crowded, setCrowded] = React.useState(false)
       const [hovered, setHovered] = React.useState(null)
       const listRef = React.useRef(null)
+      const panelRef = React.useRef(null)
+      /**
+       * Remembered list scroll offset. The panel briefly unmounts when the
+       * conversation area crosses the crowding threshold — which is exactly what
+       * happens while a window is being resized — and a freshly mounted list
+       * starts at the top, so the reader's position has to be restored.
+       */
+      const listScroll = React.useRef(0)
+      /** The row under the pointer, kept so the preview card can follow it. */
+      const hoveredRow = React.useRef(null)
+      const previewRef = React.useRef(null)
       const narrowEpisode = React.useRef(false)
       const lastWidth = React.useRef(0)
 
@@ -341,6 +453,7 @@ ${RAIL_FRAME} { display: none !important; }
        */
       const previewFor = (entry, event) => {
         const rect = event.currentTarget.getBoundingClientRect()
+        hoveredRow.current = event.currentTarget
         const prompt = typeof entry.prompt === 'string' ? entry.prompt.replace(/\s+/g, ' ').trim() : ''
         const response = typeof entry.response === 'string' ? entry.response.replace(/\s+/g, ' ').trim() : ''
         // The card sits 10px left of the row, but never far enough left to cross
@@ -366,16 +479,41 @@ ${RAIL_FRAME} { display: none !important; }
         if (total === 0) return undefined
         let frame = 0
 
+        /**
+         * Re-measure when the conversation area itself changes size. Toggling a
+         * side panel or dragging the splitter resizes it without firing scroll or
+         * window resize, and the crowding decision depends on that width. The
+         * observed element is re-bound whenever the chat replaces it.
+         */
+        let observed = null
+        let observer = null
+        const ensureObserver = () => {
+          const scroller = document.querySelector(SCROLLER)
+          if (scroller === observed) return
+          if (observer !== null) observer.disconnect()
+          observed = scroller
+          observer = null
+          const Observer = window.ResizeObserver
+          if (scroller === null || typeof Observer !== 'function') return
+          observer = new Observer(() => schedule())
+          observer.observe(scroller)
+        }
+
         const measure = () => {
           frame = 0
+          ensureObserver()
           const scroller = document.querySelector(SCROLLER)
           const host = scroller === null ? document : scroller
           const nodes = host.querySelectorAll(TURN_MARKER)
           const scrollerRect = scroller === null ? null : scroller.getBoundingClientRect()
+          placePanel(panelRef.current, scroller)
 
           // 1) Room check: the strip must stay MIN_CONTENT_GAP away from the
-          //    conversation column (the widest turn marker is a good proxy).
-          const stripLeft = window.innerWidth - PANEL_OFFSET_RIGHT - COLLAPSED_WIDTH
+          //    conversation column (the widest turn marker is a good proxy). The
+          //    strip is anchored inside the conversation area, so its left edge
+          //    is measured from that area's right edge.
+          const stripLeft = (scrollerRect === null ? window.innerWidth : scrollerRect.right)
+            - PANEL_OFFSET_RIGHT - COLLAPSED_WIDTH
           const areaWidth = scrollerRect === null ? window.innerWidth : scrollerRect.width
           let contentRight = 0
           for (const node of nodes) {
@@ -459,11 +597,16 @@ ${RAIL_FRAME} { display: none !important; }
             }
             break
           }
+          // A turn's marker closes that turn, so the turn being read is the one
+          // AFTER the last passed marker: its question and answer are what fills
+          // the viewport below that point. With no marker passed yet we are still
+          // inside the first mounted turn.
           if (current === null) {
             const first = Number(nodes[0].getAttribute('data-turn-tail'))
-            if (!Number.isNaN(first)) current = first
+            setActive(Number.isNaN(first) ? null : first)
+            return
           }
-          setActive(current)
+          setActive(Math.min(total, current + 1))
         }
 
         const schedule = () => {
@@ -477,32 +620,107 @@ ${RAIL_FRAME} { display: none !important; }
           window.removeEventListener('scroll', schedule, true)
           window.removeEventListener('resize', schedule)
           if (frame !== 0) window.cancelAnimationFrame(frame)
+          if (observer !== null) observer.disconnect()
         }
       }, [total])
 
       // Keep the turn being read inside the visible strip, so the collapsed
-      // rail tracks the reading position instead of drifting off-screen.
+      // rail tracks the reading position instead of drifting off-screen. Skipped
+      // while the pointer is over the panel: there the reader drives the list.
       React.useEffect(() => {
         if (active === null || listRef.current === null) return
+        if (panelRef.current !== null && panelRef.current.matches(':hover')) return
         const row = listRef.current.querySelector('[data-active="true"]')
         if (row !== null) row.scrollIntoView({ block: 'nearest' })
       }, [active])
+
+      // Restore the remembered offset after the panel remounts.
+      React.useEffect(() => {
+        const list = listRef.current
+        if (list === null || listScroll.current <= 0) return
+        if (list.scrollTop !== listScroll.current) list.scrollTop = listScroll.current
+      }, [crowded, total])
 
       // A hidden panel must not leave a stale preview card floating.
       React.useEffect(() => {
         if (crowded) setHovered(null)
       }, [crowded])
 
+      /**
+       * Follow the conversation area every frame instead of waiting for scroll
+       * and resize events. Opening or closing a side panel, and dragging the
+       * splitter, change the area's width without firing either event, which used
+       * to leave the panel stranded at its old position. The loop only writes to
+       * the DOM when the measured numbers actually change, so a still page costs
+       * one rect read per frame and nothing else.
+       */
+      React.useEffect(() => {
+        let stopped = false
+        let lastRight = -1
+        let lastTop = -1
+        let lastCardRight = -1
+        let lastCardTop = -1
+
+        const tick = () => {
+          if (stopped) return
+          const element = panelRef.current
+          const scroller = document.querySelector(SCROLLER)
+          const rect = scroller === null ? null : scroller.getBoundingClientRect()
+
+          if (element !== null) {
+            const right = rect === null
+              ? PANEL_OFFSET_RIGHT
+              : Math.round(window.innerWidth - rect.right + PANEL_OFFSET_RIGHT)
+            const top = rect === null
+              ? Math.round(window.innerHeight / 2)
+              : Math.round(rect.top + rect.height / 2)
+            if (right !== lastRight || top !== lastTop) {
+              lastRight = right
+              lastTop = top
+              element.style.right = right + 'px'
+              element.style.top = top + 'px'
+            }
+          }
+
+          // The preview card is anchored to the hovered row, so it has to follow
+          // the same way the panel does: a resize would otherwise strand it.
+          const card = previewRef.current
+          const row = hoveredRow.current
+          if (card !== null && row !== null) {
+            const rowRect = row.getBoundingClientRect()
+            const right = Math.round(window.innerWidth - rowRect.left + 10)
+            const top = Math.round(rowRect.top + rowRect.height / 2)
+            if (right !== lastCardRight || top !== lastCardTop) {
+              lastCardRight = right
+              lastCardTop = top
+              card.style.right = right + 'px'
+              card.style.top = top + 'px'
+            }
+          }
+
+          window.requestAnimationFrame(tick)
+        }
+
+        window.requestAnimationFrame(tick)
+        return () => { stopped = true }
+      }, [])
+
       if (total === 0 || crowded) return null
 
       const panel = h(
         'div',
-        { className: 'to-outline', role: 'navigation', 'aria-label': 'Question outline' },
+        {
+          className: 'to-outline',
+          role: 'navigation',
+          'aria-label': 'Question outline',
+          ref: panelRef,
+        },
         h(
           'div',
           {
             ref: listRef,
             className: 'to-outline__list',
+            onScroll: (event) => { listScroll.current = event.currentTarget.scrollTop },
             onWheel: (event) => {
               event.stopPropagation()
               setHovered(null)
@@ -523,8 +741,11 @@ ${RAIL_FRAME} { display: none !important; }
                 // its native tooltip after a hover delay, which we do not want.
                 'aria-label': title,
                 onMouseEnter: (event) => { previewFor(entry, event) },
-                onMouseLeave: () => { setHovered(null) },
-                onClick: () => { jumpToTurn(turn, total) },
+                onMouseLeave: () => {
+                  hoveredRow.current = null
+                  setHovered(null)
+                },
+                onClick: () => { jumpToTurn(turn, index, total) },
               },
               h('span', { className: 'to-outline__index' }, isActive ? turn + '/' + total : String(turn)),
               h('span', { className: 'to-outline__title' }, title),
@@ -540,6 +761,7 @@ ${RAIL_FRAME} { display: none !important; }
       const preview = hovered === null ? null : h(
         'div',
         {
+          ref: previewRef,
           className: 'to-outline__preview',
           style: { top: hovered.top + 'px', right: hovered.right + 'px' },
           role: 'tooltip',
