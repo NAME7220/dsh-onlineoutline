@@ -89,7 +89,7 @@ ${RAIL_FRAME} { opacity: 0 !important; pointer-events: none !important; }
 .to-outline:hover,
 .to-outline:focus-within {
   width: ${PANEL_WIDTH}px;
-  background: var(--dsw-alias-bg-l1, rgba(20, 20, 20, 0.88));
+  background: var(--dsw-alias-bg-layer-1, rgba(32, 32, 32, 0.98));
   border-color: var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.08));
   box-shadow: var(--dsw-elevation-prominent, 0 8px 24px rgba(0, 0, 0, 0.28));
 }
@@ -184,7 +184,11 @@ ${RAIL_FRAME} { opacity: 0 !important; pointer-events: none !important; }
   border-radius: 999px;
   /* Dim via colour, never via opacity: an opacity layer gets its own
      composite pass, which flattens the rounded caps of such a small box. */
-  background: rgba(255, 255, 255, 0.35);
+  /* Tint from the row's own colour, so the tick stays visible in both themes.
+     A hard-coded white would vanish on a light background. The mid-grey is the
+     fallback for engines without color-mix, and reads on either background. */
+  background: rgba(128, 128, 128, 0.45);
+  background: color-mix(in srgb, currentColor 35%, transparent);
   background: color-mix(in srgb, currentColor 35%, transparent);
   /* Fixed 30px tick slot at the row's right end. An auto left margin pins the
      tick there and the right margin centres it inside the slot, so the tick's
@@ -208,7 +212,8 @@ ${RAIL_FRAME} { opacity: 0 !important; pointer-events: none !important; }
   display: none;
 }
 .to-outline:not(:hover):not(:focus-within) .to-outline__dash {
-  background: rgba(255, 255, 255, 0.45);
+  background: rgba(128, 128, 128, 0.55);
+  background: color-mix(in srgb, currentColor 45%, transparent);
   background: color-mix(in srgb, currentColor 45%, transparent);
 }
 /* The turn being read carries the accent on its tick. Size only: the slot margin
