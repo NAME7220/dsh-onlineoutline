@@ -1,5 +1,7 @@
 # dsh-onlineoutline
 
+**English** | [简体中文](README.zh-CN.md)
+
 A scrollable **question outline** on the right edge of a DeepSeek Harness conversation. It replaces the built-in turn tick rail with a list of your questions, so you can see where you are and jump around.
 
 > **Unofficial.** This is a community plugin. It is not a DeepSeek release and is
@@ -32,7 +34,16 @@ Three colours only: grey at rest, white on hover, bright accent for the current 
 
 The bundle is a plain directory; no build step.
 
+Install straight from GitHub:
+
 ```
+dsh plugin --profile desktop add github:NAME7220/dsh-onlineoutline
+```
+
+Or clone it and add the local directory:
+
+```
+git clone https://github.com/NAME7220/dsh-onlineoutline.git
 dsh plugin --profile desktop add <path-to-this-directory>
 ```
 
